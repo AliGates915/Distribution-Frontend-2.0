@@ -1,0 +1,435 @@
+import React, { useState, useEffect, useRef } from "react";
+import axios from "axios";
+import { toast } from "react-toastify";
+import Swal from "sweetalert2";
+import { SquarePen, Trash2 } from "lucide-react";
+import TableSkeleton from "../Components/Skeleton";
+import CommanHeader from "../Components/CommanHeader";
+
+const ReceiptVoucher = () => {
+  const [vouchers, setVouchers] = useState([]);
+  const [banks, setBanks] = useState([]);
+  const [salesmen, setSalesmen] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [nextReceiptId, setNextReceiptId] = useState("BR-001");
+  const [submitting, setSubmitting] = useState(false);
+  const [amountError, setAmountError] = useState(""); // new
+  const sliderRef = useRef(null);
+  const userInfo = JSON.parse(localStorage.getItem("userInfo")) || {};
+
+  const API_URL = `${import.meta.env.VITE_API_BASE_URL}/receipt-vouchers`;
+
+  const [formData, setFormData] = useState({
+    date: new Date().toISOString().split("T")[0],
+    receiptId: "",
+    bank: "",
+    salesman: "",
+    amountReceived: "",
+    remarks: "",
+    bankBalance: 0,
+    salesmanBalance: 0,
+  });
+
+  /** ================== Fetch All Vouchers ================== **/
+  const fetchVouchers = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(API_URL);
+      setVouchers(res.data?.data || []);
+    } catch {
+      toast.error("Failed to fetch vouchers");
+    } finally {
+      setTimeout(() => setLoading(false), 800);
+    }
+  };
+
+  useEffect(() => {
+    fetchVouchers();
+  }, []);
+
+  /** ================== Generate Next ID ================== **/
+  useEffect(() => {
+    if (vouchers.length > 0) {
+      const maxNo = Math.max(
+        ...vouchers.map((v) => {
+          const match = v.receiptId?.match(/BR-(\d+)/);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+      );
+      setNextReceiptId("BR-" + (maxNo + 1).toString().padStart(3, "0"));
+    } else {
+      setNextReceiptId("BR-001");
+    }
+  }, [vouchers]);
+
+  /** ================== Open Add Form ================== **/
+  const handleAdd = async () => {
+    setIsEditing(false);
+    setEditId(null);
+    setFormData({
+      date: new Date().toISOString().split("T")[0],
+      receiptId: nextReceiptId,
+      bank: "",
+      salesman: "",
+      amountReceived: "",
+      remarks: "",
+      bankBalance: 0,
+      salesmanBalance: 0,
+    });
+
+    setIsFormOpen(true);
+
+    // Fetch banks & salesmen with delay (smooth UX)
+    setTimeout(async () => {
+      await Promise.all([fetchBanks(), fetchSalesmen()]);
+    }, 400);
+  };
+
+  /** ================== Fetch Banks & Salesmen ================== **/
+  const fetchBanks = async () => {
+    try {
+      const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/banks`);
+      setBanks(res.data?.data || []);
+    } catch {
+      setBanks([]);
+    }
+  };
+
+  const fetchSalesmen = async () => {
+    try {
+      const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/employees`);
+      setSalesmen(res.data || []);
+    } catch {
+      setSalesmen([]);
+    }
+  };
+
+  /** ================== Edit Voucher ================== **/
+  const handleEdit = (v) => {
+    setIsEditing(true);
+    setEditId(v._id);
+    setFormData({
+      date: v.date?.split("T")[0],
+      receiptId: v.receiptId,
+      bank: v.bank?._id || "",
+      salesman: v.salesman?._id || "",
+      amountReceived: v.amountReceived || "",
+      remarks: v.remarks || "",
+      bankBalance: v.bank?.balance || 0,
+      salesmanBalance: v.salesman?.recoveryBalance || 0,
+    });
+    setIsFormOpen(true);
+
+    // fetch banks and salesman when open edit
+    setTimeout(async () => {
+      await Promise.all([fetchBanks(), fetchSalesmen()]);
+    }, 400);
+  };
+
+  /** ================== Delete Voucher ================== **/
+  const handleDelete = async (id) => {
+    const confirm = await Swal.fire({
+      title: "Are you sure?",
+      text: "This will permanently delete the receipt voucher.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#2563EB",
+      cancelButtonColor: "#d33",
+      confirmButtonText: "Yes, delete it!",
+    });
+
+    if (confirm.isConfirmed) {
+      try {
+        await axios.delete(`${API_URL}/${id}`, {
+          headers: { Authorization: `Bearer ${userInfo?.token}` },
+        });
+        toast.success("Voucher deleted");
+        fetchVouchers();
+      } catch {
+        toast.error("Failed to delete voucher");
+      }
+    }
+  };
+
+  /** ================== Submit Form ================== **/
+  const handleSubmit = async (e) => {
+    if (Number(formData.amountReceived) > formData.salesmanBalance) {
+      setAmountError("Amount cannot exceed receivable balance");
+      setSubmitting(false);
+      return;
+    }
+    e.preventDefault();
+    setSubmitting(true); // Start spinner
+    const payload = {
+      date: formData.date,
+      receiptId: formData.receiptId || nextReceiptId,
+      bank: formData.bank,
+      salesman: formData.salesman,
+      amountReceived: Number(formData.amountReceived),
+      remarks: formData.remarks,
+    };
+
+    try {
+      const headers = {
+        Authorization: `Bearer ${userInfo?.token}`,
+        "Content-Type": "application/json",
+      };
+
+      if (isEditing && editId) {
+        await axios.put(`${API_URL}/${editId}`, payload, { headers });
+        toast.success("Receipt updated successfully");
+      } else {
+        await axios.post(API_URL, payload, { headers });
+        toast.success("Receipt created successfully");
+      }
+
+      fetchVouchers();
+      setIsFormOpen(false);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to save voucher");
+    } finally {
+      setSubmitting(false); // Stop spinner
+    }
+  };
+
+  /** ================== UI ================== **/
+  return (
+    <div className="p-4 bg-gray-50 min-h-screen">
+      <CommanHeader />
+      <div className="flex justify-between mb-6 px-6">
+        <h1 className="text-2xl font-bold text-newPrimary">Receipt Vouchers</h1>
+        <button
+          className="bg-newPrimary text-white px-4 py-2 rounded-lg hover:bg-newPrimary/90"
+          onClick={handleAdd}
+        >
+          + Add Voucher
+        </button>
+      </div>
+
+      {/* Table Section */}
+      <div className="border rounded-xl shadow bg-white mx-6 overflow-hidden">
+        {loading ? (
+          <TableSkeleton rows={6} cols={7} />
+        ) : vouchers.length === 0 ? (
+          <div className="text-center py-6 text-gray-500">No vouchers found</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
+                <tr>
+                  <th className="px-4 py-3 text-left">#</th>
+                  <th className="px-4 py-3 text-left">Receipt ID</th>
+                  <th className="px-4 py-3 text-left">Salesman</th>
+                  <th className="px-4 py-3 text-left">Bank</th>
+                  <th className="px-4 py-3 text-left">Amount</th>
+                  <th className="px-4 py-3 text-left">Date</th>
+                  <th className="px-4 py-3 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vouchers.map((v, i) => (
+                  <tr key={v._id} className="border-b hover:bg-gray-50">
+                    <td className="px-4 py-3">{i + 1}</td>
+                    <td className="px-4 py-3">{v.receiptId}</td>
+                    <td className="px-4 py-3">{v.salesman?.employeeName || "-"}</td>
+                    <td className="px-4 py-3">{v.bank?.bankName || "-"}</td>
+                    <td className="px-4 py-3">Rs. {v.amountReceived}</td>
+                    <td className="px-4 py-3">
+                      {new Date(v.date).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 flex gap-2">
+                      <button onClick={() => handleEdit(v)} className="text-blue-600">
+                        <SquarePen size={18} />
+                      </button>
+                      <button onClick={() => handleDelete(v._id)} className="text-red-600">
+                        <Trash2 size={18} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Form Modal */}
+      {isFormOpen && (
+        <div className="fixed inset-0 bg-gray-700/40 flex items-center justify-center z-50">
+          <div
+            ref={sliderRef}
+            className="bg-white rounded-2xl shadow-2xl w-full md:w-[700px] max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex justify-between items-center border-b p-4">
+              <h2 className="text-lg font-bold text-newPrimary">
+                {isEditing ? "Update Receipt Voucher" : "Add Receipt Voucher"}
+              </h2>
+              <button
+                className="text-2xl text-gray-500"
+                onClick={() => setIsFormOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block mb-1 font-medium">Date</label>
+                  <input
+                    type="date"
+                    value={formData.date}
+                    onChange={(e) =>
+                      setFormData({ ...formData, date: e.target.value })
+                    }
+                    className="w-full border rounded-md p-3"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 font-medium">Receipt ID</label>
+                  <input
+                    type="text"
+                    value={formData.receiptId || nextReceiptId}
+                    readOnly
+                    className="w-full border rounded-md p-3 bg-gray-100"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block mb-1 font-medium">Bank</label>
+                  <select
+                    value={formData.bank}
+                    onChange={(e) => {
+                      const selected = banks.find((b) => b._id === e.target.value);
+                      setFormData({
+                        ...formData,
+                        bank: selected?._id,
+                        bankBalance: selected?.balance || 0,
+                      });
+                    }}
+                    className="w-full border rounded-md p-3"
+                    required
+                  >
+                    <option value="">Select Bank</option>
+                    {banks.map((b) => (
+                      <option key={b._id} value={b._id}>
+                        {b.bankName} — {b.accountHolderName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 font-medium">Bank Balance</label>
+                  <input
+                    type="text"
+                    value={formData.bankBalance}
+                    readOnly
+                    className="w-full border rounded-md p-3 bg-gray-100"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block mb-1 font-medium">Salesman</label>
+                  <select
+                    value={formData.salesman}
+                    onChange={(e) => {
+                      const selected = salesmen.find((s) => s._id === e.target.value);
+                      setFormData({
+                        ...formData,
+                        salesman: selected?._id,
+                        salesmanBalance: selected?.recoveryBalance || 0,
+                      });
+                    }}
+                    className="w-full border rounded-md p-3"
+                    required
+                  >
+                    <option value="">Select Salesman</option>
+
+                    {/* ✅ Show only salesmen with recoveryBalance > 0 */}
+                    {salesmen
+                      .filter((s) => (s.recoveryBalance || 0) > 0)
+                      .map((s) => (
+                        <option key={s._id} value={s._id}>
+                          {s.employeeName}
+                        </option>
+                      ))}
+                  </select>
+
+                </div>
+                <div>
+                  <label className="block mb-1 font-medium">Receivable Balance</label>
+                  <input
+                    type="text"
+                    value={formData.salesmanBalance}
+                    readOnly
+                    className="w-full border rounded-md p-3 bg-gray-100"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block mb-1 font-medium">
+                  Amount Received <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  value={formData.amountReceived}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (Number(value) > formData.salesmanBalance) {
+                      setAmountError("Amount cannot exceed receivable balance");
+                    } else {
+                      setAmountError(""); // clear error
+                    }
+                    setFormData({ ...formData, amountReceived: value });
+                  }}
+                  required
+                  className="w-full border rounded-md p-3"
+                  placeholder="Enter amount"
+                />
+                {amountError && (
+                  <p className="text-red-500 text-sm mt-1">{amountError}</p>
+                )}
+
+              </div>
+
+              <div>
+                <label className="block mb-1 font-medium">Remarks</label>
+                <textarea
+                  value={formData.remarks}
+                  onChange={(e) =>
+                    setFormData({ ...formData, remarks: e.target.value })
+                  }
+                  rows="3"
+                  className="w-full border rounded-md p-3"
+                  placeholder="Enter remarks"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-newPrimary text-white py-3 rounded-lg hover:bg-newPrimary/80 flex items-center justify-center gap-2"
+                disabled={submitting} // optional: disable button while submitting
+              >
+                {submitting ? (
+                  <div className="w-5 h-5 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                ) : (
+                  "Save Voucher"
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ReceiptVoucher;

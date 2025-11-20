@@ -1,0 +1,288 @@
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { SquarePen, Trash2, Eye, Loader } from "lucide-react";
+import toast from "react-hot-toast";
+import { ScaleLoader } from "react-spinners";
+import CommanHeader from "../../Components/CommanHeader";
+import TableSkeleton from "../../Components/Skeleton";
+
+const ExpensePage = () => {
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [salesmanList, setSalesmanList] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [selectedSalesman, setSelectedSalesman] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
+  const [viewExpense, setViewExpense] = useState(null);
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const API_BASE = import.meta.env.VITE_API_BASE_URL;
+  const [currentPage, setCurrentPage] = useState(1);
+  const recordsPerPage = 10; // you can change page size if needed
+  const [showSalesmanError, setShowSalesmanError] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const formDate = (date) => {
+    if (!date) return "";
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = d.toLocaleString("en-US", { month: "short" });
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  };
+
+
+  // ✅ Fetch Expenses based on salesman/date
+  const fetchExpenses = async () => {
+    try {
+
+
+      setIsLoading(true);
+      const dateQuery = selectedDate ? `?date=${selectedDate}` : ""; // Optional date
+
+      const { data } = await axios.get(
+        `${API_BASE}/salesman-expense/by-date`
+      );
+
+      if (data.success) {
+        const mapped = data.data.map((exp) => ({
+          id: exp._id,
+          date: exp.date.split("T")[0],
+          salesman: exp.salesmanId?.employeeName || "N/A",
+          items: exp.expenses.map((e) => ({
+            name: e.expenseName,
+            amount: e.amount,
+          })),
+          totalAmount: exp.totalAmount,
+        }));
+        setExpenses(mapped);
+        setExpenseAmount(data.totalExpense || 0);
+      } else {
+        setExpenses([]);
+      }
+    } catch (error) {
+      toast.error("Failed to fetch expenses");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ✅ Auto load today's date and data
+  useEffect(() => {
+    const today = new Date().toLocaleDateString("en-CA");
+    setSelectedDate(today);
+  }, []);
+
+  // ✅ Auto-refresh when salesman or date changes
+  useEffect(() => {
+    fetchExpenses();
+  }, []);
+  // console.log({expenses});
+
+  useEffect(() => {
+    if (!selectedSalesman) {
+      setShowSalesmanError(true);
+    }
+  }, []);
+
+  const filteredExpenses = expenses.filter((exp) => {
+    const search = searchTerm.toLowerCase();
+
+    return (
+      exp.salesman?.toLowerCase().includes(search) ||
+      exp.items.some((i) => i.name.toLowerCase().includes(search)) ||
+      exp.totalAmount.toString().includes(search) ||
+      exp.date.toLowerCase().includes(search)
+    );
+  });
+
+  // 🔹 Pagination calculations
+  const indexOfLastRecord = currentPage * recordsPerPage;
+  const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
+  const currentRecords = filteredExpenses.slice(indexOfFirstRecord, indexOfLastRecord);
+  const totalPages = Math.ceil(filteredExpenses.length / recordsPerPage);
+
+
+  return (
+    <div className="p-4 bg-gray-50 min-h-screen">
+      <CommanHeader />
+      {isSaving ? (
+        <div className="w-full flex justify-center items-center h-screen">
+          <Loader size={70} color="#1E93AB" className=" animate-spin" />
+        </div>
+      ) : (
+        <div className="px-6 mx-auto">
+          <div className="mb-6 flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-newPrimary">
+              Expenses Sheet
+            </h1>
+          </div>
+
+          {isLoading && (
+            <div className="fixed inset-0 bg-white/70 flex items-center justify-center z-[9999]">
+              <ScaleLoader color="#1E93AB" size={60} />
+            </div>
+          )}
+
+          {/* 🔹 Filters */}
+          <div className="flex justify-end items-center w-full gap-4">
+            <div className="flex justify-end items-center w-full gap-4 mb-5">
+
+              {/* Today Expense Amount */}
+              <div className="whitespace-nowrap">
+                <label className="text-newPrimary text-lg inline-flex gap-2 items-center font-medium mb-2">
+                  Today Expense Amount:
+                  <p className="text-black">{expenseAmount}</p>
+                </label>
+              </div>
+
+              {/* 🔍 Search Bar */}
+              <input
+                type="text"
+                placeholder="Search expenses..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-[280px] p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-newPrimary"
+              />
+            </div>
+          </div>
+
+          {/* ===== TABLE ===== */}
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <div className="min-w-full">
+                <div className="hidden lg:grid grid-cols-[80px_150px_1fr_150px_150px] gap-6 bg-gray-100 py-3 px-6 text-xs font-semibold text-gray-600 uppercase border-b">
+                  <div>Sr</div>
+                  <div>Date</div>
+                  {/* <div className="text-center">Salesman</div> */}
+                  <div className="text-center">Expenses</div>
+                  <div>Amount</div>
+                  <div className="text-center">Actions</div>
+                </div>
+
+                <div className="flex flex-col divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
+                  {isLoading ? (
+                    // 🦴 Skeleton loader while fetching
+                    <TableSkeleton
+                      rows={currentRecords.length || 5}
+                      cols={5}
+                      className="lg:grid-cols-[80px_150px_1fr_150px_150px]"
+                    />
+                  ) : expenses.length === 0 ? (
+                    <div className="text-center py-4 text-gray-500 bg-white">
+                      No expenses found.
+                    </div>
+                  ) : (
+                    currentRecords.map((exp, index) => (
+                      <div
+                        key={exp.id}
+                        className="grid grid-cols-1 lg:grid-cols-[80px_150px_1fr_150px_150px] gap-4 items-center px-6 py-4 text-sm bg-white hover:bg-gray-50 transition"
+                      >
+                        <div>{indexOfFirstRecord + index + 1}</div>
+                        <div>{formDate(exp.date)}</div>
+                        {/* <div className="text-center">{exp.salesman}</div> */}
+                        <div className="text-center">
+                          {exp.items.map((i) => i.name).join(", ")}
+                        </div>
+                        <div className="font-semibold text-blue-600">
+                          {exp.totalAmount}
+                        </div>
+                        <div className="flex justify-center gap-2">
+                          <button
+                            onClick={() => setViewExpense(exp)}
+                            className="text-yellow-500 hover:text-yellow-600"
+                          >
+                            <Eye size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {totalPages > 1 && (
+                  <div className="flex justify-between items-center py-4 px-6 bg-white border-t rounded-b-xl mt-2 shadow-sm">
+                    <p className="text-sm text-gray-600">
+                      Showing {indexOfFirstRecord + 1}–
+                      {Math.min(indexOfLastRecord, expenses.length)} of{" "}
+                      {expenses.length} records
+                    </p>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() =>
+                          setCurrentPage((prev) => Math.max(prev - 1, 1))
+                        }
+                        disabled={currentPage === 1}
+                        className={`px-3 py-1 rounded-md ${currentPage === 1
+                          ? "bg-gray-300 cursor-not-allowed"
+                          : "bg-newPrimary text-white hover:bg-newPrimary/80"
+                          }`}
+                      >
+                        Previous
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          setCurrentPage((prev) =>
+                            Math.min(prev + 1, totalPages)
+                          )
+                        }
+                        disabled={currentPage === totalPages}
+                        className={`px-3 py-1 rounded-md ${currentPage === totalPages
+                          ? "bg-gray-300 cursor-not-allowed"
+                          : "bg-newPrimary text-white hover:bg-newPrimary/80"
+                          }`}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ===== VIEW MODAL ===== */}
+          {viewExpense && (
+            <div className="fixed inset-0 bg-gray-600/50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+                <h2 className="text-xl font-bold text-newPrimary mb-4">
+                  Expense Details
+                </h2>
+                <p>
+                  <strong>Date:</strong> {viewExpense.date}
+                </p>
+
+                <div className="mt-3">
+                  <h3 className="font-semibold mb-2">Items:</h3>
+                  <ul className="space-y-1">
+                    {viewExpense.items.map((item, idx) => (
+                      <li key={idx} className="flex justify-between text-sm">
+                        <span>{item.name}</span>
+                        <span>{item.amount}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <p className="mt-4 font-semibold text-blue-600">
+                  Total Amount: {viewExpense.totalAmount}
+                </p>
+                <button
+                  onClick={() => setViewExpense(null)}
+                  className="mt-6 w-full bg-newPrimary text-white py-2 rounded-lg hover:bg-newPrimary/80"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ExpensePage;
